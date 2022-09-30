@@ -5,14 +5,38 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include <iostream>
+#include <chrono>
 
 #include <vector>
 #include <windows.h>
 #include <Windows.h>
 
 using namespace cv;
+//typedef std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
+
+struct PossiblePlayerPoint {
+	int numClose = 0;
+	int distanceBetweenClosest = 0;
+	std::vector<Point> playerPoints;
+
+	void addPoint(int close, int distance, Point playerPoint) {
+		numClose += close;
+		distanceBetweenClosest += distance;
+		playerPoints.push_back(playerPoint);
+	}
+
+	bool checkAlreadyAdded(Point check) {
+		for (int i = 0; i < playerPoints.size(); i++) {
+			if (playerPoints[i] == check) {
+				return true;
+			}
+		}
+		return false;
+	}
+};
 
 Mat getMat(HWND hWND) {
 
@@ -60,9 +84,9 @@ Mat getMat(HWND hWND) {
 	return mat;
 }
 
-bool drawPlayerLoc(Mat& empty, Point pos, int width, int height) {
+bool detectPlayerArea(Mat& empty, Point pos, int width, int height) {
 	double check = sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2));
-	if (check > 60 && check < 75){
+	if (check > 85 && check < 120){
 		//circle(empty, pos, 2, Scalar(255, 0, 0), 2, 8, 0);
 		return true;
 	}
@@ -78,16 +102,18 @@ int main() {
 	int currentPlayerLocX = 0;
 	int currentPlayerLocY = 0;
 	bool runbot = true;
-	while (runbot){
-		if (GetAsyncKeyState(VK_NUMPAD0)){
-			runbot = false;
-		}
+	while (runbot) {
+		//timestamp start = std::chrono::high_resolution_clock::now();
+		//if (GetAsyncKeyState(VK_NUMPAD0)) {
+		//	runbot = false;
+		//}
 
+		//Mat original = Mat(40, 40, CV_8UC4, (Scalar)5);
 		Mat original = getMat(hWND);
 		Size s = original.size();
 		int type = original.type();
 		int width = s.width, height = s.height;
-		//width: 768       height: 480
+		//width: 768       height: 480		new: (1250, 805)
 		Mat gray, edge;
 		Mat empty(s, type);
 		original.copyTo(gray);
@@ -97,8 +123,8 @@ int main() {
 		Canny(gray, edge, 10, 400, 3);
 
 		//playerArea = width * .5 + -23, height * .5 + -23;
-		//circle(empty, Point(width*.5, height*.5), 60, Scalar(255, 0, 0), 1, 8, 0);
-		//circle(empty, Point(width*.5, height*.5), 75, Scalar(255, 0, 0), 1, 8, 0);
+		//circle(empty, Point(width*.5, height*.5), 85, Scalar(255, 0, 0), 1, 8, 0);
+		//circle(empty, Point(width*.5, height*.5), 120, Scalar(255, 0, 0), 1, 8, 0);
 		//circle(empty, Point(width*.5, height*.5), 1, Scalar(255, 0, 0), 1, 8, 0);
 		//line(empty, Point(0,height*.5), Point(width, height*.5), Scalar(255, 255, 255), 1, LINE_AA);
 		//line(empty, Point(width*.5,0), Point(width*.5, height), Scalar(255, 255, 255), 1, LINE_AA);
@@ -109,10 +135,11 @@ int main() {
 
 		std::vector<Vec4i> lines;
 		std::vector<Point> playerLoc;
+		std::vector<PossiblePlayerPoint> allPossible;
 		HoughLinesP(edge, lines, 1, CV_PI / 180, 7, 5, 10);
 		int smallest = 99999;
 		int length;
-		for (size_t i = 0; i < lines.size(); i++){
+		for (size_t i = 0; i < lines.size(); i++) {
 			Vec4i l = lines[i];
 			length = sqrt(pow((double)(l[0] - l[2]), 2) + pow((double)(l[1] - l[3]), 2));
 			//circle(empty, Point(l[0], l[1]), 2, Scalar(0, 255, 0), 2, 8, 0);
@@ -120,23 +147,50 @@ int main() {
 			int x = abs(l[0] + l[2]) / 2, y = abs(l[1] + l[3]) / 2;
 			Point pos = Point(x, y);
 			//std::printf("in: %d, %d    out: %d, %d\n", x, y, pos.x, pos.y);
-			if (drawPlayerLoc(empty, pos, width, height)) {
+			if (detectPlayerArea(empty, pos, width, height)) {
 				playerLoc.push_back(pos);
 			}
-			line(empty, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 1, LINE_AA);	
+			line(empty, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 1, LINE_AA);
 		}
-		int avgX = 0, avgY = 0;
-		if (playerLoc.size() >= 1 && playerLoc.size() <= 3) {
+		float alpha = 0.8;
+		int avgX = 0, avgY = 0, distance = 0;
+		int** allCluster = new int* [playerLoc.size()];
+		for (int i = 0; i < playerLoc.size(); i++) {
+			allCluster[i] = new int[playerLoc.size()];
+			for (int j = 0; j < playerLoc.size(); j++) {
+				allCluster[i][j] = -1;
+			}
+		}
+		PossiblePlayerPoint cluster;
+		if (playerLoc.size() >= 1){ //&& playerLoc.size() <= 5) {
 			for (int i = 0; i < playerLoc.size(); i++) {
+				for (int j = i; j < playerLoc.size(); j++) {
+					if ( (abs(playerLoc[i].x - playerLoc[j].x) + abs(playerLoc[i].y - playerLoc[j].y)) < 16 && i != j) {
+						allCluster[i][j] = (abs(playerLoc[i].x - playerLoc[j].x) + abs(playerLoc[i].y - playerLoc[j].y));
+						circle(empty, Point(playerLoc[i].x, playerLoc[i].y), 3, Scalar(0, 255, 0), 4, 8, 0);
+						circle(empty, Point(playerLoc[j].x, playerLoc[j].y), 3, Scalar(0, 255, 0), 4, 8, 0);
+					}
+					distance += abs(playerLoc[i].x - playerLoc[j].x);
+					distance += abs(playerLoc[i].y - playerLoc[j].y);
+				}
+				//circle(empty, Point(playerLoc[i].x, playerLoc[i].y), 3, Scalar(255, 255, 255), 4, 8, 0);
 				avgX += playerLoc[i].x;
 				avgY += playerLoc[i].y;
 			}
-			currentPlayerLocX = avgX / playerLoc.size();
-			currentPlayerLocY = avgY / playerLoc.size();
+			if (distance <= 200) {
+				currentPlayerLocX = alpha * (avgX / playerLoc.size()) + (1 - alpha) * currentPlayerLocX;
+				currentPlayerLocY = alpha * (avgY / playerLoc.size()) + (1 - alpha) * currentPlayerLocY;
+			}
 		}
 		circle(empty, Point(currentPlayerLocX, currentPlayerLocY), 4, Scalar(255, 0, 0), 4, 8, 0);
 		imshow("output", empty);
 		//imshow("edge", edge);
-		key = waitKey(30);
+		key = waitKey(1);
+
+		//timestamp end = std::chrono::high_resolution_clock::now();
+		//int fps = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+		//if (fps > 0) {
+		//	std::cout << "FPS: " << 1000 / fps << std::endl;
+		//}
 	}
 }
