@@ -16,9 +16,11 @@
 #include <windows.h>
 #include <Windows.h>
 
+
 #define π 3.14159265
 
 using namespace cv;
+typedef std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
 
 Mat getMat(HWND hWND) {
 
@@ -66,7 +68,7 @@ Mat getMat(HWND hWND) {
 	return mat;
 }
 
-struct MeanShiftPoint {
+struct PlayerDetectionCircle {
 	std::vector<Point> containedPoints;
 	bool hasPoints;
 	int xPos;
@@ -76,14 +78,14 @@ struct MeanShiftPoint {
 	int avgY;
 	double score = 100;
 
-	MeanShiftPoint() {
+	PlayerDetectionCircle() {
 		xPos = 0;
 		yPos = 0;
 		radius = 0;
 		hasPoints = false;
 	}
 
-	MeanShiftPoint(int x, int y, int radIn){
+	PlayerDetectionCircle(int x, int y, int radIn){
 		xPos = x;
 		yPos = y;
 		radius = radIn;
@@ -126,16 +128,17 @@ struct MeanShiftPoint {
 			score = (double)dist / pow(containedPoints.size(), containedPoints.size());
 			return score;
 		}
+		return 0;
 	}
 
 };
 
-bool detectPlayer(std::vector<MeanShiftPoint>& allPossible, Mat& empty, Point pos, int width, int height) {
+bool detectPlayer(std::vector<PlayerDetectionCircle>& allPossible, Mat& empty, Point pos, int width, int height) {
 	double fromCenter = sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)); // distance from center of game/screen
 	if (fromCenter > 85 && fromCenter < 120){
 		for(int i = 0; i < allPossible.size(); i++){
 			// circle(empty, Point(allPossible[i].xPos, allPossible[i].yPos), 41, Scalar(0, 255, 0), 4, 8, 0);
-			fromCenter = sqrt(pow(pos.x - allPossible[i].xPos, 2) + pow(pos.y - allPossible[i].yPos, 2)); // distance from center of MeanShiftPoint
+			fromCenter = sqrt(pow(pos.x - allPossible[i].xPos, 2) + pow(pos.y - allPossible[i].yPos, 2)); // distance from center of PlayerDetectionCircle
 			if (fromCenter < 41){
 				allPossible[i].addPoint(pos);
 				// circle(empty, pos, 4, Scalar(0, 160, 255), 4, 8, 0);
@@ -145,6 +148,30 @@ bool detectPlayer(std::vector<MeanShiftPoint>& allPossible, Mat& empty, Point po
 	}
 	return false;
 }
+
+struct angleDistance{
+	int degree;
+	double radian;
+	std::vector<double> distances;
+
+	angleDistance(){}
+	
+	angleDistance(int ang, double dist){
+		degree = ang;
+		radian = ang*(π/180);
+		distances.push_back(dist);
+	}
+
+	void addWall(double dist){
+		distances.push_back(dist);
+		std::sort(distances.begin(), distances.end());
+	}
+
+	double getClosestWall(){
+		return distances[0];
+	}
+
+};
 
 struct Wall{
 	double distToCenter;
@@ -163,51 +190,112 @@ struct Wall{
 		middle = mid;
 	}
 
+	void getAnglesCovered(int width, int height, std::vector<angleDistance>& angles){
+		//Calc angle for point1
+		double point1Y = (point1.y - (height / 2)), point1X = (point1.x - (width / 2));
+		double point1Radians = atan(-point1Y/point1X);
+		if (point1.x > width / 2 && point1.y > height / 2) {point1Radians += 2*π;
+		}else if (point1.x < width / 2) {point1Radians += π;}
+		double point1Angle = point1Radians * (180/π);
+
+		//Calc angle for point2
+		double point2Y = (point2.y - (height / 2)), point2X = (point2.x - (width / 2));
+		double point2Radians = atan(-point2Y/point2X);
+		if (point2.x > width / 2 && point2.y > height / 2) {point2Radians += 2*π;
+		}else if (point2.x < width / 2) {point2Radians += π;}
+		double point2Angle = point2Radians * (180/π);
+
+		int j = 1;
+		if(point1Angle > point2Angle && sqrt(pow(point1Angle - point2Angle, 2)) < 180){
+			for(int i = point2Angle; i < point1Angle; i++){
+				angles[i].addWall(distToCenter);
+				if(i > 0 && i < 359){
+					angles[i + 1].addWall(distToCenter);
+					angles[i - 1].addWall(distToCenter);
+				}
+			}
+		}else if(point1Angle < point2Angle && sqrt(pow(point1Angle - point2Angle, 2)) < 180){
+			for(int i = point1Angle; i < point2Angle; i++){
+				angles[i].addWall(distToCenter);
+				if(i > 0 && i < 359){
+					angles[i + 1].addWall(distToCenter);
+					angles[i - 1].addWall(distToCenter);
+				}
+			}
+		}else if(point1Angle > point2Angle && sqrt(pow(point1Angle - point2Angle, 2)) > 180){
+			int j = 361;
+			for(int i = point1Angle; i < j; i++){
+				if(i == 360){
+					i = 0;
+					j = point2Angle;
+				}
+				angles[i].addWall(distToCenter);
+				if(i > 0 && i < 359){
+					angles[i + 1].addWall(distToCenter);
+					angles[i - 1].addWall(distToCenter);
+				}
+			}
+		}else if(point1Angle < point2Angle && sqrt(pow(point1Angle - point2Angle, 2)) > 180){
+			int j = 361;
+			for(int i = point2Angle; i < j; i++){
+				if(i == 360){
+					i = 0;
+					j = point1Angle;
+				}
+				angles[i].addWall(distToCenter);
+				if(i > 0 && i < 359){
+					angles[i + 1].addWall(distToCenter);
+					angles[i - 1].addWall(distToCenter);
+				}
+			}
+		}
+	}
+
 
 };
 
-void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<std::vector<Point>>& contours, Point pt1, Point pt2, Point middle, int width, int height) {
+void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angleDistance>& angles, Point pt1, Point pt2, Point middle, int width, int height) {
 	std::vector<Point> triangle;
 	if((pt1.x - pt2.x) != 0){
 		double slope = double(pt1.y - pt2.y)/double(pt1.x - pt2.x);
 		double yOffSet = (slope*(width/2) - slope*pt1.x + pt1.y);
 		double toCenter = sqrt(pow(middle.x - width*.5, 2) + pow(middle.y - height*.5, 2));
 		if (sqrt(pow(yOffSet - height/2, 2)) < 50){ // parallel walls
-			line(empty, pt1, pt2, Scalar(0, 200, 0), 1, LINE_AA);
+			// line(empty, pt1, pt2, Scalar(0, 200, 0), 1, LINE_AA);
 		}else{ // perpendicular walls
 			Wall added = *(new Wall(pt1, pt2, slope, toCenter, middle));
 			parallelWalls.push_back(added);
 			line(empty, pt1, pt2, Scalar(160, 0, 160), 1, LINE_AA);
-			triangle.push_back(Point(width/2, height/2));
-			triangle.push_back(pt1);
-			triangle.push_back(pt2);
-			contours.push_back(triangle);
+
+			// putText(empty, std::to_string((int)pt1Angle), pt1, FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+			// putText(empty, std::to_string((int)pt2Angle), pt2, FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+			// std::printf("%f\n",pt1Angle);
 		}
 	}
 
 	// double fromCenter = sqrt(pow(middle.x - width*.5, 2) + pow(middle.y - height*.5, 2));
 }
 
-void createPlayerMSPs(std::vector<MeanShiftPoint>& allPossible, int width, int height){
-		MeanShiftPoint input = *(new MeanShiftPoint(width * .5, height * .5 - 105, 41));
+void createPlayerMSPs(std::vector<PlayerDetectionCircle>& allPossible, int width, int height){
+		PlayerDetectionCircle input = *(new PlayerDetectionCircle(width * .5, height * .5 - 105, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 + 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
+		input = *(new PlayerDetectionCircle(width*.5 + 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 + 105, height*.5, 41));
+		input = *(new PlayerDetectionCircle(width*.5 + 105, height*.5, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 + 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
+		input = *(new PlayerDetectionCircle(width*.5 + 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5, height*.5 + 105, 41));
+		input = *(new PlayerDetectionCircle(width*.5, height*.5 + 105, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 - 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
+		input = *(new PlayerDetectionCircle(width*.5 - 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 - 105, height*.5, 41));
+		input = *(new PlayerDetectionCircle(width*.5 - 105, height*.5, 41));
 		allPossible.push_back(input);
-		input = *(new MeanShiftPoint(width*.5 - 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
+		input = *(new PlayerDetectionCircle(width*.5 - 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
 		allPossible.push_back(input);
 }
 
-void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall> parallelWalls, std::vector<std::vector<Point>>& contours, bool *pointDetected, Mat& empty, std::vector<MeanShiftPoint>& allPossible, int width, int height){
+void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWalls, std::vector<angleDistance>& angles, bool *pointDetected, Mat& empty, std::vector<PlayerDetectionCircle>& allPossible, int width, int height){
 		double length;
 		for(size_t i = 0; i < lines.size(); i++) {
 			Vec4i l = lines[i];
@@ -221,13 +309,13 @@ void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall> parallelWall
 				}
 			}
 			if(pos.y > 70 && sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)) > 120){
-				detectWalls(parallelWalls, empty, contours, Point(l[0], l[1]), Point(l[2], l[3]), pos, width, height);
+				detectWalls(parallelWalls, empty, angles, Point(l[0], l[1]), Point(l[2], l[3]), pos, width, height);
 				// circle(empty, pos, 4, Scalar(255, 255, 0), 6, 8, 0);
 			}
 		}
 }
 
-void setPlayerLocation(std::vector<MeanShiftPoint>& allPossible, double* currentPlayerLocX, double* currentPlayerLocY, float alpha, double* playerAngle, int width, int height) {
+void setPlayerLocation(std::vector<PlayerDetectionCircle>& allPossible, double* currentPlayerLocX, double* currentPlayerLocY, float alpha, double* playerAngle, int width, int height) {
 	double lowestScore = 9999999;
 	int lowestIndex = 0;
 	Point playerLoc;
@@ -246,16 +334,39 @@ void setPlayerLocation(std::vector<MeanShiftPoint>& allPossible, double* current
 	*playerAngle = atan(-(*currentPlayerLocY - (height / 2)) / (*currentPlayerLocX - (width / 2)));
 	if (*currentPlayerLocX > width / 2 && *currentPlayerLocY > height / 2) { // +x, +y
 		*playerAngle += 2 * π;
-	}
-	else if (*currentPlayerLocX < width / 2) {
+	}else if (*currentPlayerLocX < width / 2) {
 		*playerAngle += π;
 	}
+}
+
+void movePlayer(INPUT keyboard, String dir){
+	
+	if(dir == "Left"){keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_LEFT),0);}
+	if(dir == "Right"){keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_RIGHT),0);}
+	
+	keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+
+	SendInput(1, &keyboard, sizeof(INPUT));
+	
+	Sleep(1);
+	
+	keyboard.ki.dwFlags = KEYEVENTF_KEYUP;
+	SendInput(1, &keyboard, sizeof(INPUT));
 }
 
 int main() {
 	LPCTSTR window_title = (LPCTSTR)"Super Hexagon";
 	HWND hWND = FindWindow(NULL, window_title);
 	namedWindow("output", WINDOW_NORMAL);
+	
+	INPUT keyboard;
+	keyboard.type = INPUT_KEYBOARD;
+	keyboard.ki.time = 0;
+	keyboard.ki.wVk = 0;
+	keyboard.ki.dwExtraInfo = 0;
+	keyboard.ki.dwFlags = 0;
+	keyboard.ki.wVk = 0;
+
 	int key = 0;
 	double currentPlayerLocX = 0;
 	double currentPlayerLocY = 0;
@@ -263,7 +374,17 @@ int main() {
 	bool runbot = true;
 
 	while (runbot) {
-		std::vector<std::vector<Point>> contours;
+		timestamp start = std::chrono::high_resolution_clock::now();
+		
+		keyboard.ki.dwFlags = KEYEVENTF_KEYUP;
+		SendInput(1, &keyboard, sizeof(INPUT));
+		
+		std::vector<angleDistance> angles;
+		angleDistance angle;
+		for(int i = 0; i < 360; i++){
+			angle = *(new angleDistance(i, 9999));
+			angles.push_back(angle);
+		}
 		//Mat original = Mat(40, 40, CV_8UC4, (Scalar)5);
 		Mat original = getMat(hWND);
 		Size s = original.size();
@@ -279,7 +400,7 @@ int main() {
 		HoughLinesP(edge, lines, 1, CV_PI / 180, 7, 5, 12);
 
 
-		std::vector<MeanShiftPoint> allPossible;
+		std::vector<PlayerDetectionCircle> allPossible;
 		createPlayerMSPs(allPossible, width, height);
 
 		// circle(empty, Point(width*.5, height*.5), 85, Scalar(255, 0, 0), 1, 8, 0);
@@ -290,24 +411,82 @@ int main() {
 		bool pointDetected = false;
 		std::vector<Wall> parallelWalls;
 
-		checkAllDetections(lines, parallelWalls, contours ,&pointDetected, empty, allPossible, width, height);
+		checkAllDetections(lines, parallelWalls, angles ,&pointDetected, empty, allPossible, width, height);
 
 		float alpha = 0.5;
 		if(pointDetected){
 			setPlayerLocation(allPossible, &currentPlayerLocX, &currentPlayerLocY, alpha, &playerAngle, width, height);
 		}
 
+		for(int i = 0; i < parallelWalls.size(); i++){
+			parallelWalls[i].getAnglesCovered(width, height, angles);
+		}
+
+		double furthest = 0;
+		int angleIndex;
+		for(int i = 0; i < 360; i++){
+			if(angles[i].distances[0] > furthest){
+				furthest = angles[i].distances[0];
+				angleIndex = i;
+			}
+			
+			// if(angles[i].distances[0] < 9000){
+			// 	circle(empty, Point(angles[i].distances[0]*cos(angles[i].radian) + width/2, angles[i].distances[0]*sin(-angles[i].radian) + height/2), 1, Scalar(0,0,255));
+			// }else{
+			// 	circle(empty, Point(angles[i].distances[0]*cos(angles[i].radian) + width/2, angles[i].distances[0]*sin(-angles[i].radian) + height/2), 1, Scalar(255,255,255));
+			// }
+		}
+
+		if(angles[int(playerAngle*(180/π))].distances[0] > 9000){
+			angleIndex = int(playerAngle*(180/π));
+		}
+
+		String dir;
+
+		// C: playerAngle*(180/π)
+		// D: angleIndex
+		double CD = abs(playerAngle*(180/π) - angleIndex);
+		double CDp360 = playerAngle*(180/π) - angleIndex + 360;
+		double CDm360 = playerAngle*(180/π) - angleIndex + 360;
+
+		if(CD < CDp360 && CD < CDm360){
+			if(playerAngle*(180/π) - angleIndex > 0){ dir = "Right";
+			}else{ 								      dir = "Left"; }
+		}else if(CDp360 < CD && CDp360 < CDm360){
+			dir = "Right";
+		}else if(CDm360 < CD && CDm360 < CDp360){
+			dir = "Left";
+		}
+		
+		if(abs(int(playerAngle*(180/π)) - angleIndex) > 1){
+			movePlayer(keyboard, dir);
+		}
+
+
+
+
+
 		// String text = std::to_string(playerAngle) + " = arctan(" + std::to_string(-(currentPlayerLocY-(height/2)) ) + " / " + std::to_string((currentPlayerLocX-(width/2))) + ")";
 		// String calc = "cos(" + std::to_string(playerAngle) + ") = " + std::to_string(cos(playerAngle)) + " \t sin(" + std::to_string(playerAngle) + ") = " + std::to_string(sin(playerAngle));		
 		// circle(empty, Point(currentPlayerLocX, currentPlayerLocY), 4, Scalar(255, 0, 0), 6, 8, 0);
-		circle(empty, Point(120*cos(playerAngle) + width/2, 120*sin(-playerAngle) + height/2), 4, Scalar(255, 0, 0), 6, 8, 0);
+		circle(empty, Point(120*cos(playerAngle) + width/2, 120*sin(-playerAngle) + height/2), 4, Scalar(255, 0, 0), 6);
 		// putText(empty, text, Point(10,30), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
-		// putText(empty, calc, Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
 
-		
+		timestamp end = std::chrono::high_resolution_clock::now();
+		int fps = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+		if (fps > 0) {
+			putText(empty, "FPS: " + std::to_string(1000/fps), Point(10,30), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		}
+
+		line(empty, Point(width/2, height/2), Point(300*cos(playerAngle) + width/2, 300*sin(-playerAngle) + height/2), Scalar(0, 255, 255), 1, LINE_AA);
+		line(empty, Point(width/2, height/2), Point(300*cos(angleIndex*(π/180)) + width/2, 300*sin(-angleIndex*(π/180)) + height/2), Scalar(0, 160, 255), 1, LINE_AA);
+		putText(empty, "Current: " + std::to_string(playerAngle*(180/π)), Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		putText(empty, "Desired: " + std::to_string(angleIndex), Point(10,110), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		putText(empty, dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
 
 		// putText(empty, "Score: " + std::to_string(lowestScore), Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
 		imshow("output", empty);
 		key = waitKey(1);
 	}
+
 }
