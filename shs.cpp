@@ -16,11 +16,59 @@
 #include <windows.h>
 #include <Windows.h>
 
-
 #define π 3.14159265
 
 using namespace cv;
 typedef std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
+
+struct Offsets{
+	enum : DWORD {
+		BasePointer = 0x750000 + 0x15E8EC,  // fix, not static base
+
+		PlayerAngle = 0x1E0,
+		MouseDownLeft = 0x38,
+		MouseDownRight = 0x3C,
+		otherAngle1 = 0x1D8,
+		otherAngle2 = 0x1DC,
+		otherAngle3 = 0x1AC,
+	};
+};
+
+struct circularList{
+	int size;
+	int current;
+
+	circularList(int current, int size){
+		this->size = size;
+		this->current = current;
+	}
+
+	circularList& operator+=(const int& num){
+		int fixed = num%size;
+		if(current + fixed <= size-1 && current + fixed >= 0){
+			current += fixed;
+		}else if(current + fixed > size-1){
+			current = current + fixed - size;
+		}else if(current + fixed < 0){
+			current = size + current + fixed;
+		}
+
+		return *this;
+	}
+
+	circularList& operator-=(const int& num){
+		int fixed = num%size;
+		if(current - fixed <= size-1 && current - fixed >= 0){
+			current -= fixed;
+		}else if(current - fixed > size-1){
+			current = current - fixed - size;
+		}else if(current - fixed < 0){
+			current = size + current - fixed;
+		}
+		
+		return *this;
+	}
+};
 
 Mat getMat(HWND hWND) {
 
@@ -68,85 +116,32 @@ Mat getMat(HWND hWND) {
 	return mat;
 }
 
-struct PlayerDetectionCircle {
-	std::vector<Point> containedPoints;
-	bool hasPoints;
-	int xPos;
-	int yPos;
-	int radius;
-	int avgX;
-	int avgY;
-	double score = 100;
+int compareAngles(double bestAng, double playerAng, String* dir){
+	double normal = abs(playerAng*(180/π) - bestAng*(180/π));
+	double add360 = playerAng*(180/π) - bestAng*(180/π) + 360;
+	double minus360 = abs(playerAng*(180/π) - bestAng*(180/π) - 360);
 
-	PlayerDetectionCircle() {
-		xPos = 0;
-		yPos = 0;
-		radius = 0;
-		hasPoints = false;
-	}
-
-	PlayerDetectionCircle(int x, int y, int radIn){
-		xPos = x;
-		yPos = y;
-		radius = radIn;
-		hasPoints = false;
-	}
-
-	void addPoint(Point newPoint){
-		containedPoints.push_back(newPoint);
-		hasPoints = true;
-	}
-
-	Point calcAvgPos(){
-		int currAvgX = 0;
-		int currAvgY = 0;
-		for(int i = 0; i < containedPoints.size(); i++){
-			currAvgX += containedPoints[i].x;
-			currAvgY += containedPoints[i].y;
-		}
-		if (containedPoints.size() > 0) {
-			currAvgX /= containedPoints.size(); // size somehow 0?
-			currAvgY /= containedPoints.size();
-			avgX = currAvgX;
-			avgY = currAvgY;
-		}
-
-		return(Point(currAvgX, currAvgY));
-	}
-
-	double calcClusterScore(){
-		if (containedPoints.size() > 1) {
-			int dist = 0;
-			for (int i = 0; i < containedPoints.size(); i++) {
-				for (int j = i; j < containedPoints.size(); j++) {
-					if (i != j) {
-						dist += sqrt(pow(containedPoints[i].x - containedPoints[j].x, 2));
-						dist += sqrt(pow(containedPoints[i].y - containedPoints[j].y, 2));
-					}
-				}
-			}
-			score = (double)dist / pow(containedPoints.size(), containedPoints.size());
-			return score;
-		}
+	if(abs(int(playerAng*(180/π)) - bestAng*(180/π)) < 2){
+		*dir = "None";
 		return 0;
 	}
 
-};
-
-bool detectPlayer(std::vector<PlayerDetectionCircle>& allPossible, Mat& empty, Point pos, int width, int height) {
-	double fromCenter = sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)); // distance from center of game/screen
-	if (fromCenter > 85 && fromCenter < 120){
-		for(int i = 0; i < allPossible.size(); i++){
-			// circle(empty, Point(allPossible[i].xPos, allPossible[i].yPos), 41, Scalar(0, 255, 0), 4, 8, 0);
-			fromCenter = sqrt(pow(pos.x - allPossible[i].xPos, 2) + pow(pos.y - allPossible[i].yPos, 2)); // distance from center of PlayerDetectionCircle
-			if (fromCenter < 41){
-				allPossible[i].addPoint(pos);
-				// circle(empty, pos, 4, Scalar(0, 160, 255), 4, 8, 0);
-			}
+	if(normal < add360 && normal < minus360){
+		if(playerAng*(180/π) - bestAng*(180/π) > 0){
+			*dir = "Right";
+		}else{
+			*dir = "Left";
 		}
-		return true;
+		return abs(normal);
+	}else if(add360 < normal && add360 < minus360){
+		*dir = "Right";
+		return add360;
+	}else if(minus360 < normal && minus360 < add360){
+		*dir = "Left";
+		return minus360;
 	}
-	return false;
+	return 0;
+	
 }
 
 struct angleDistance{
@@ -254,6 +249,28 @@ struct Wall{
 
 };
 
+struct wallSegment{
+	int start;
+	int middle;
+	int end;
+	double distToCenter;
+	double distFromPlayer;
+	String dirFromPlayer;
+
+	wallSegment(){}
+
+	wallSegment(int startIn, int endIn, double playerAngleRad, double toCenter){
+		start = startIn;
+		end = endIn;
+		middle = (end + start)/2;
+		distToCenter = toCenter;
+		double middleAngle = (π/180)*((endIn + startIn)/2);
+		distFromPlayer = compareAngles(middleAngle, playerAngleRad, &dirFromPlayer);
+	}
+};
+
+
+
 void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angleDistance>& angles, Point pt1, Point pt2, Point middle, int width, int height) {
 	std::vector<Point> triangle;
 	if((pt1.x - pt2.x) != 0){
@@ -276,89 +293,94 @@ void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angle
 	// double fromCenter = sqrt(pow(middle.x - width*.5, 2) + pow(middle.y - height*.5, 2));
 }
 
-void createPlayerMSPs(std::vector<PlayerDetectionCircle>& allPossible, int width, int height){
-		PlayerDetectionCircle input = *(new PlayerDetectionCircle(width * .5, height * .5 - 105, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 + 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 + 105, height*.5, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 + 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5, height*.5 + 105, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 - 105*sqrt(2)/2, height*.5 + 105*sqrt(2)/2, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 - 105, height*.5, 41));
-		allPossible.push_back(input);
-		input = *(new PlayerDetectionCircle(width*.5 - 105*sqrt(2)/2, height*.5 - 105*sqrt(2)/2, 41));
-		allPossible.push_back(input);
-}
+void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWalls, std::vector<angleDistance>& angles, Mat& empty, int width, int height){
+	double length;
+	for(size_t i = 0; i < lines.size(); i++) {
+		Vec4i line = lines[i];
+		Point pos = Point(abs(line[0] + line[2]) / 2, abs(line[1] + line[3]) / 2);
 
-void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWalls, std::vector<angleDistance>& angles, bool *pointDetected, Mat& empty, std::vector<PlayerDetectionCircle>& allPossible, int width, int height){
-		double length;
-		for(size_t i = 0; i < lines.size(); i++) {
-			Vec4i l = lines[i];
-			length = sqrt(pow((double)(l[0] - l[2]), 2) + pow((double)(l[1] - l[3]), 2));
-			Point pos = Point(abs(l[0] + l[2]) / 2, abs(l[1] + l[3]) / 2);
-			// std::printf("in: %d, %d    out: %d, %d\n", x, y, pos.x, pos.y);
-			// line(empty, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 1, LINE_AA);
-			if(length < 20){
-				if(detectPlayer(allPossible, empty, pos, width, height)){
-					*pointDetected = true;
-				}
-			}
-			if(pos.y > 70 && sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)) > 120){
-				detectWalls(parallelWalls, empty, angles, Point(l[0], l[1]), Point(l[2], l[3]), pos, width, height);
-				// circle(empty, pos, 4, Scalar(255, 255, 0), 6, 8, 0);
-			}
-		}
-}
-
-void setPlayerLocation(std::vector<PlayerDetectionCircle>& allPossible, double* currentPlayerLocX, double* currentPlayerLocY, float alpha, double* playerAngle, int width, int height) {
-	double lowestScore = 9999999;
-	int lowestIndex = 0;
-	Point playerLoc;
-	for(int i = 0; i < allPossible.size(); i++) {
-		if(allPossible[i].hasPoints && allPossible[i].calcClusterScore() < lowestScore){
-			lowestScore = allPossible[i].score;
-			lowestIndex = i;
+		if(pos.y > 70 && sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)) > 120){
+			detectWalls(parallelWalls, empty, angles, Point(line[0], line[1]), Point(line[2], line[3]), pos, width, height);
+			// circle(empty, pos, 4, Scalar(255, 255, 0), 6, 8, 0);
 		}
 	}
-	if(allPossible.size() > 0){
-		playerLoc = allPossible[lowestIndex].calcAvgPos();
-		*currentPlayerLocX = alpha * (playerLoc.x) + (1 - alpha) * *currentPlayerLocX;
-		*currentPlayerLocY = alpha * (playerLoc.y) + (1 - alpha) * *currentPlayerLocY;
-	}
-
-	*playerAngle = atan(-(*currentPlayerLocY - (height / 2)) / (*currentPlayerLocX - (width / 2)));
-	if (*currentPlayerLocX > width / 2 && *currentPlayerLocY > height / 2) { // +x, +y
-		*playerAngle += 2 * π;
-	}else if (*currentPlayerLocX < width / 2) {
-		*playerAngle += π;
-	}
 }
 
-void movePlayer(INPUT keyboard, String dir){
-	
-	if(dir == "Left"){keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_LEFT),0);}
-	if(dir == "Right"){keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_RIGHT),0);}
-	
-	keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+bool circularListCheck(int at, int check, int thresh, int size){
+	circularList begining(at, size);
+	circularList ending(at, size);
+	begining -= thresh;
+	ending += thresh;
+	while(begining.current != ending.current){
+		if(begining.current == check){
+			return true;
+		}
+		begining.current += 1;
+	}
+	return false;
+}
 
-	SendInput(1, &keyboard, sizeof(INPUT));
+void setPlayerLocation(Point2d* playerXY, double* playerAngleRad, int* playerAngleDeg, HANDLE hProcess, DWORD appBase, int width, int height) {
+	bool success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::PlayerAngle), playerAngleDeg, sizeof(DWORD), NULL);
+	assert(success);
+	circularList adjustedAngle(*playerAngleDeg, 359);
+	adjustedAngle += 27; *playerAngleDeg = adjustedAngle.current;
+	*playerAngleRad = (double)adjustedAngle.current * π/180;
+
+	playerXY->x = 100*cos(*playerAngleRad) + width/2;
+	playerXY->y = 100*sin(-*playerAngleRad) + height/2;
+
+}
+
+void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDistance> angles, Mat& empty, double playerAngleRad, int width, int height){
 	
-	Sleep(1);
-	
-	keyboard.ki.dwFlags = KEYEVENTF_KEYUP;
-	SendInput(1, &keyboard, sizeof(INPUT));
+	int beginAngle = 0;
+	int prevDist = int(angles[0].getClosestWall());
+	wallSegment wall;
+	for(int i = 0; i < 360; i++){
+		if(int(angles[i].getClosestWall()) != prevDist){
+			wall = *(new wallSegment(beginAngle, i, playerAngleRad, angles[beginAngle].getClosestWall()));
+			wallSegments.push_back(wall);
+			beginAngle = i;
+			prevDist = int(angles[i].getClosestWall());
+		}
+	}
+
+}
+
+void chooseBestAngle(std::vector<wallSegment>& wallSegments, int playerAngle, double* bestAngle){
+	int farthest = 0;
+	int index = 0;
+	for(int i = 0; i < wallSegments.size(); i++){
+		if(wallSegments[i].distToCenter > farthest){
+			farthest = wallSegments[i].distToCenter;
+			index = i;
+		}
+	}
+
+	*bestAngle = wallSegments[index].middle;
+
+
 }
 
 int main() {
+
 	LPCTSTR window_title = (LPCTSTR)"Super Hexagon";
 	HWND hWND = FindWindow(NULL, window_title);
 	namedWindow("output", WINDOW_NORMAL);
 	
+	DWORD processId;
+	GetWindowThreadProcessId(hWND, &processId);
+	HANDLE hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, processId);
+	
+	DWORD appBase;
+	// TODO func to get base pointer  (not static on PC restarts)
+	bool success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(Offsets::BasePointer), &appBase, sizeof(DWORD), NULL);
+	assert(success);
+
+	
+
+
 	INPUT keyboard;
 	keyboard.type = INPUT_KEYBOARD;
 	keyboard.ki.time = 0;
@@ -367,18 +389,19 @@ int main() {
 	keyboard.ki.dwFlags = 0;
 	keyboard.ki.wVk = 0;
 
-	int key = 0;
-	double currentPlayerLocX = 0;
-	double currentPlayerLocY = 0;
-	double playerAngle = 0;
-	bool runbot = true;
 
-	while (runbot) {
+	int key = 0;
+	Point2d playerXY = Point2d(0,0);
+	double playerAngleRad = 0;
+	int playerAngleDeg = 0;
+
+	while (true) {
 		timestamp start = std::chrono::high_resolution_clock::now();
+		// int playerAngleDegree; DWORD data = {0};
 		
-		keyboard.ki.dwFlags = KEYEVENTF_KEYUP;
-		SendInput(1, &keyboard, sizeof(INPUT));
-		
+		// playerAngleDegree = data;
+		// std::printf("%d\n", playerAngleDegree);
+
 		std::vector<angleDistance> angles;
 		angleDistance angle;
 		for(int i = 0; i < 360; i++){
@@ -398,79 +421,68 @@ int main() {
 		Canny(gray, edge, 10, 400, 3);
 		std::vector<Vec4i> lines;
 		HoughLinesP(edge, lines, 1, CV_PI / 180, 7, 5, 12);
-
-
-		std::vector<PlayerDetectionCircle> allPossible;
-		createPlayerMSPs(allPossible, width, height);
+		//key up
+		keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+		SendInput(1, &keyboard, sizeof(INPUT));
+		keyboard.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+		SendInput(1, &keyboard, sizeof(INPUT));	
 
 		// circle(empty, Point(width*.5, height*.5), 85, Scalar(255, 0, 0), 1, 8, 0);
 		// circle(empty, Point(width*.5, height*.5), 120, Scalar(255, 255, 255), 1, 8, 0);
 		// circle(empty, Point(width*.5, height*.5), 1, Scalar(255, 0, 0), 1, 8, 0);
 
-		
-		bool pointDetected = false;
+
+
 		std::vector<Wall> parallelWalls;
+		checkAllDetections(lines, parallelWalls, angles, empty, width, height);
 
-		checkAllDetections(lines, parallelWalls, angles ,&pointDetected, empty, allPossible, width, height);
+		setPlayerLocation(&playerXY, &playerAngleRad, &playerAngleDeg, hProcess, appBase, width, height);
 
-		float alpha = 0.5;
-		if(pointDetected){
-			setPlayerLocation(allPossible, &currentPlayerLocX, &currentPlayerLocY, alpha, &playerAngle, width, height);
-		}
 
 		for(int i = 0; i < parallelWalls.size(); i++){
 			parallelWalls[i].getAnglesCovered(width, height, angles);
 		}
 
-		double furthest = 0;
-		int angleIndex;
-		for(int i = 0; i < 360; i++){
-			if(angles[i].distances[0] > furthest){
-				furthest = angles[i].distances[0];
-				angleIndex = i;
-			}
-			
-			// if(angles[i].distances[0] < 9000){
-			// 	circle(empty, Point(angles[i].distances[0]*cos(angles[i].radian) + width/2, angles[i].distances[0]*sin(-angles[i].radian) + height/2), 1, Scalar(0,0,255));
-			// }else{
-			// 	circle(empty, Point(angles[i].distances[0]*cos(angles[i].radian) + width/2, angles[i].distances[0]*sin(-angles[i].radian) + height/2), 1, Scalar(255,255,255));
-			// }
-		}
 
-		if(angles[int(playerAngle*(180/π))].distances[0] > 9000){
-			angleIndex = int(playerAngle*(180/π));
+		std::vector<wallSegment> wallSegments;
+		setWallSegments(wallSegments, angles, empty, playerAngleRad, width, height); /////////////////////////// <--- fix
+
+		for(int i = 0; i < wallSegments.size(); i++){
+			ellipse(empty, Point(width/2, height/2), Size(wallSegments[i].distToCenter, wallSegments[i].distToCenter), 0, -wallSegments[i].start, -wallSegments[i].end, Scalar(0,0,255));
 		}
 
 		String dir;
-
-		// C: playerAngle*(180/π)
-		// D: angleIndex
-		double CD = abs(playerAngle*(180/π) - angleIndex);
-		double CDp360 = playerAngle*(180/π) - angleIndex + 360;
-		double CDm360 = playerAngle*(180/π) - angleIndex + 360;
-
-		if(CD < CDp360 && CD < CDm360){
-			if(playerAngle*(180/π) - angleIndex > 0){ dir = "Right";
-			}else{ 								      dir = "Left"; }
-		}else if(CDp360 < CD && CDp360 < CDm360){
-			dir = "Right";
-		}else if(CDm360 < CD && CDm360 < CDp360){
-			dir = "Left";
+		double bestAngle = 0;
+		if(wallSegments.size() > 0){
+			chooseBestAngle(wallSegments, playerAngleDeg, &bestAngle);
 		}
+
+		compareAngles(bestAngle, playerAngleRad, &dir);
+		if(dir == "None"){ keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_DOWN),0);
+		}else if(dir == "Left") { keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_LEFT),0);
+		}else if(dir == "Right"){ keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_RIGHT),0);}
 		
-		if(abs(int(playerAngle*(180/π)) - angleIndex) > 1){
-			movePlayer(keyboard, dir);
-		}
+		//key down
+		keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+		SendInput(1, &keyboard, sizeof(INPUT));
 
 
 
+		float testAngle;
+		success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::otherAngle3), &testAngle, sizeof(DWORD), NULL);
+		assert(success);
+		line(empty, Point(width/2, height/2), Point(300*cos((double)(testAngle * π/180)) + width/2, 300*sin((double)-(testAngle * π/180)) + height/2), Scalar(0, 255, 0), 1, LINE_AA);
+		// success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::otherAngle2), &testAngle, sizeof(DWORD), NULL);
+		// assert(success);
+		// line(empty, Point(width/2, height/2), Point(300*cos((double)(testAngle * π/180)) + width/2, 300*sin((double)-(testAngle * π/180)) + height/2), Scalar(0, 0, 255), 1, LINE_AA);
 
-
-		// String text = std::to_string(playerAngle) + " = arctan(" + std::to_string(-(currentPlayerLocY-(height/2)) ) + " / " + std::to_string((currentPlayerLocX-(width/2))) + ")";
-		// String calc = "cos(" + std::to_string(playerAngle) + ") = " + std::to_string(cos(playerAngle)) + " \t sin(" + std::to_string(playerAngle) + ") = " + std::to_string(sin(playerAngle));		
-		// circle(empty, Point(currentPlayerLocX, currentPlayerLocY), 4, Scalar(255, 0, 0), 6, 8, 0);
-		circle(empty, Point(120*cos(playerAngle) + width/2, 120*sin(-playerAngle) + height/2), 4, Scalar(255, 0, 0), 6);
-		// putText(empty, text, Point(10,30), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		
+		circle(empty, playerXY, 4, Scalar(255, 255, 255), 6, 8, 0);
+		line(empty, Point(width/2, height/2), Point(300*cos(playerAngleRad) + width/2, 300*sin(-playerAngleRad) + height/2), Scalar(0, 255, 255), 1, LINE_AA);
+		line(empty, Point(width/2, height/2), Point(300*cos(bestAngle*(π/180)) + width/2, 300*sin(-bestAngle*(π/180)) + height/2), Scalar(0, 160, 255), 1, LINE_AA);
+		putText(empty, "Current: " + std::to_string((int)playerAngleRad*(180/π)), Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		putText(empty, "Desired: " + std::to_string((int)bestAngle), Point(10,110), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		putText(empty, dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
 
 		timestamp end = std::chrono::high_resolution_clock::now();
 		int fps = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -478,15 +490,10 @@ int main() {
 			putText(empty, "FPS: " + std::to_string(1000/fps), Point(10,30), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
 		}
 
-		line(empty, Point(width/2, height/2), Point(300*cos(playerAngle) + width/2, 300*sin(-playerAngle) + height/2), Scalar(0, 255, 255), 1, LINE_AA);
-		line(empty, Point(width/2, height/2), Point(300*cos(angleIndex*(π/180)) + width/2, 300*sin(-angleIndex*(π/180)) + height/2), Scalar(0, 160, 255), 1, LINE_AA);
-		putText(empty, "Current: " + std::to_string(playerAngle*(180/π)), Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
-		putText(empty, "Desired: " + std::to_string(angleIndex), Point(10,110), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
-		putText(empty, dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
-
-		// putText(empty, "Score: " + std::to_string(lowestScore), Point(10,70), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
 		imshow("output", empty);
 		key = waitKey(1);
+		if(key == 27) break; // close on ESC
 	}
 
+	return 0;
 }
