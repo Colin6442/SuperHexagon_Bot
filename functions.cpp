@@ -13,6 +13,8 @@
 #include <vector>
 #include <windows.h>
 #include <Windows.h>
+#include <tlhelp32.h>
+#include <tchar.h>
 
 #include "wallClasses.h"
 #include "circularList.h"
@@ -20,20 +22,44 @@
 using namespace cv;
 constexpr auto π = 3.14159265;
 
-struct Offset {
+struct Offset{
 	enum : DWORD {
 		GameBase = 0,
-		BasePointer = 0x380000 + 0x15E8EC,  // fix, not static base
+		BasePointer = 0xe0000 + 0x15E8EC,  // fix, not static base
 
 		PlayerAngle = 0x1E0,
+		PlayerAngleOffset = 0x298C, //float
 		relativeAngle = 0x2980,
 		MouseDownLeft = 0x38,
 		MouseDownRight = 0x3C,
+		worldAngle = 0x1A0,			//float
 		otherAngle1 = 0x1D8,
 		otherAngle2 = 0x1DC,
 		otherAngle3 = 0x1AC,
+		otherAngle4 = 0x2974,
+		otherAngle5 = 0x2978,
 	};
 };
+
+// https://www.unknowncheats.me/forum/programming-for-beginners/315168-please-explain-base-address-automatically.html
+uintptr_t GetBaseAddress(DWORD procId, const wchar_t* modName){
+	uintptr_t modBaseAddr = 0;
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, procId);
+	if (hSnap != INVALID_HANDLE_VALUE) {
+		MODULEENTRY32 modEntry;
+		modEntry.dwSize = sizeof(modEntry);
+		if (Module32First(hSnap, &modEntry)) {
+			do {
+				if (!_wcsicmp(modEntry.szModule, modName)) {
+					modBaseAddr = (uintptr_t)modEntry.modBaseAddr;
+					break;
+				}
+			} while (Module32Next(hSnap, &modEntry));
+		}
+	}
+	CloseHandle(hSnap);
+	return modBaseAddr;
+}
 
 Mat getMat(HWND hWND) {
 
@@ -144,31 +170,74 @@ void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWal
 	}
 }
 
-void setPlayerLocation(Point2d* playerXY, double* playerAngleRad, int* playerAngleDeg, HANDLE hProcess, DWORD appBase, int width, int height) {
-	bool success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offset::PlayerAngle), playerAngleDeg, sizeof(DWORD), NULL);
-	assert(success);
-	circularList adjustedAngle(*playerAngleDeg, 359);
-	adjustedAngle += 27; *playerAngleDeg = adjustedAngle.current;
+void setPlayerLocation(Point2d* playerXY, double* playerAngleRad, int* playerAngleDeg, float* playerOffset, String dir, HANDLE hProcess, DWORD appBase, int width, int height) {
+
+	circularList adjustedAngle(*playerAngleDeg, 360);
+	adjustedAngle += 5*(*playerOffset) + 27; *playerAngleDeg = adjustedAngle.current;
+
 	*playerAngleRad = (double)adjustedAngle.current * π/180;
 
-	playerXY->x = 100*cos(*playerAngleRad) + width/2;
-	playerXY->y = 100*sin(-*playerAngleRad) + height/2;
+	playerXY->x = (/*100*(width/1250)*/60)*cos(*playerAngleRad) + width/2;
+	playerXY->y = (/*100*(height/805)*/60)*sin(-*playerAngleRad) + height/2;
 
 }
 
-void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDistance> angles, Mat& empty, double playerAngleRad, int width, int height){
+void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDistance> angles, int* sectionAngles, double playerAngleRad, int width, int height){
 	
-	int beginAngle = 0;
-	int prevDist = int(angles[0].getClosestWall());
 	wallSegment wall;
-	for(int i = 0; i < 360; i++){
-		if(int(angles[i].getClosestWall()) != prevDist){
-			wall = *(new wallSegment(beginAngle, i, playerAngleRad, angles[beginAngle].getClosestWall()));
-			wallSegments.push_back(wall);
-			beginAngle = i;
-			prevDist = int(angles[i].getClosestWall());
-		}
+	wallSegment firstWall;
+	wallSegment lastWall;
+	// int beginAngle = 0;
+	// int prevDist = int(angles[0].getClosestWall());
+	// for(int i = 0; i < 360; i++){
+	// 	if(int(angles[i].getClosestWall()) != prevDist){
+	// 		wall = *(new wallSegment(beginAngle, i, playerAngleRad, angles[beginAngle].getClosestWall()));
+	// 		wallSegments.push_back(wall);
+	// 		beginAngle = i;
+	// 		prevDist = int(angles[i].getClosestWall());
+	// 	}
+	// }
+	
+	// edge cases between 0 & 360 angles
+	if(sectionAngles[0] == 0){
+		sectionAngles[0] += 1;
 	}
+	double avg = 0;
+
+	// 0 -> sectionAngles[0]
+	for(int i = 0; i < sectionAngles[0]; i++){
+		avg += angles[i].getClosestWall();
+	}
+
+	// sectionAngles[5] -> 359
+	for(int i = sectionAngles[5]; i < 360; i++){
+		avg += angles[i].getClosestWall();
+	}
+
+	firstWall = *(new wallSegment(0, sectionAngles[0], playerAngleRad, avg/60));
+	// wallSegments.push_back(wall);
+	lastWall = *(new wallSegment(sectionAngles[5], 359, playerAngleRad, avg/60));
+	// wallSegments.push_back(wall);
+
+	// everything inbetween
+	for(int i = 0; i < 5; i++){
+		double avg = 0;
+		for(int j = sectionAngles[i]; j < sectionAngles[i+1] && j < 360; j++){
+			avg += angles[j].getClosestWall();
+		}
+
+		// assert(avg/double(sectionAngles[i+(6-useAll)] - sectionAngles[i]) >= 0 && avg/double(sectionAngles[i+(6-useAll)] - sectionAngles[i]) < 10000);
+		if (avg / double(sectionAngles[i + 1] - sectionAngles[i]) < 0 || avg / double(sectionAngles[i + 1] - sectionAngles[i]) > 90000) {
+			std::printf("unexpected: %f\n", avg / double(sectionAngles[i + 1] - sectionAngles[i]));
+		}
+
+		//																										normally +1 can be +0
+		wall = *(new wallSegment(sectionAngles[i], sectionAngles[i+1], playerAngleRad, avg/double(sectionAngles[i+1] - sectionAngles[i])));
+		wallSegments.push_back(wall);
+	}
+	
+	wallSegments.push_back(firstWall);
+	wallSegments.push_back(lastWall);
 
 }
 

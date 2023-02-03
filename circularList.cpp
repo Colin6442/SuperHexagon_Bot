@@ -1,4 +1,5 @@
 #include "circularList.h"
+#include <cstdlib>
 
 circularList::circularList(int current, int size){
 	this->size = size;
@@ -6,31 +7,25 @@ circularList::circularList(int current, int size){
 }
 
 circularList& circularList::operator+=(const int& num){
-	int fixed = num % size;
-	if (current + fixed <= size - 1 && current + fixed >= 0) {
-		current += fixed;
-	}
-	else if (current + fixed > size - 1) {
-		current = current + fixed - size;
-	}
-	else if (current + fixed < 0) {
-		current = size + current + fixed;
-	}
+	current = (current + num) % size;
 
 	return *this;
 }
 
 circularList& circularList::operator-=(const int& num){
-	int fixed = num%size;
-	if(current - fixed <= size-1 && current - fixed >= 0){
-		current -= fixed;
-	}else if(current - fixed > size-1){
-		current = current - fixed - size;
-	}else if(current - fixed < 0){
-		current = size + current - fixed;
-	}
+	current = (current + size - num) % size;
 	
 	return *this;
+}
+
+int circularList::difference(int num){
+	int diff = abs(current - num);
+
+	if(size - diff < diff){
+		return (size - diff);
+	}
+
+	return diff;
 }
 
 

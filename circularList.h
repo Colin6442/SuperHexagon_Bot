@@ -8,6 +8,7 @@ struct circularList{
 	circularList(int current, int size);
 	circularList& operator+=(const int& num);
 	circularList& operator-=(const int& num);
+	int difference(int num);
 };
 
 // Example Usage
