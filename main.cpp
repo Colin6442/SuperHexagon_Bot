@@ -41,7 +41,7 @@ int main() {
 	// Get Game Window Info
 	LPCSTR window_title = (LPCSTR)"Super Hexagon";
 	HWND hWND = FindWindowA(NULL, window_title);
-	namedWindow("output", WINDOW_NORMAL); //create window to show outputs
+	// namedWindow("output", WINDOW_NORMAL); //create window to show outputs
 
 	// Setup Memory Access
 	DWORD processId = -1;
@@ -145,7 +145,7 @@ int main() {
 		bestDirection(&vars, outputWindow);
 
 		for(int i = 0; i < vars.wallSegments.size(); i++){
-			ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(vars.wallSegments[i].distToCenter, vars.wallSegments[i].distToCenter), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,255,0));
+			// ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(vars.wallSegments[i].distToCenter, vars.wallSegments[i].distToCenter), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,255,0));
 			
 			if (vars.playerAngleDeg > vars.wallSegments[i].start && vars.playerAngleDeg < vars.wallSegments[i].end){
 				if(i == 6){
@@ -153,17 +153,19 @@ int main() {
 				}else{
 					vars.playerSlot = i;
 				}
-				ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(50, 50), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,0,255));
+				// ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(50, 50), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,0,255));
 			}
 			
 			if(vars.best_slot == i){
-				ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(60, 60), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(255,0,0));
+				// ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(60, 60), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(255,0,0));
 			}
 		}
 
 		// compareAngles()
 
 		// display debug stuff
+		
+		/*
 		for(int i = 0; i < 6; i++){
 			putText(outputWindow, std::to_string((int)vars.wallSegments[i].distToCenter), Point(200*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 200*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
 			putText(outputWindow, std::to_string((int)vars.wallSegments[i].angleFromPlayer), Point(100*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 100*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(255,255,255));
@@ -171,6 +173,7 @@ int main() {
 			putText(outputWindow, std::to_string(vars.wallSegments[i].score), Point(150*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 150*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0,160,255));
 
 		}
+		*/
 		
 		
 		// Set Key Press
@@ -184,17 +187,15 @@ int main() {
 			SendInput(1, &keyboard, sizeof(INPUT));
 		}
 
-		// line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(worldAngle * π/180)) + vars.width/2, 300*sin((double)-(worldAngle * π/180)) + vars.height/2), Scalar(0, 0, 255), 1, LINE_AA);
-		// for(int i = 0; i < 6; i++){
-		// 	line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(vars.sectionAngles[i] * π/180)) + vars.width/2, 300*sin((double)-(vars.sectionAngles[i] * π/180)) + vars.height/2), Scalar(255, 0, 0), 1, LINE_AA);
-		// }
-		// line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(vars.relativeAngles * π/180)) + vars.width/2, 300*sin((double)-(vars.relativeAngles * π/180)) + vars.height/2), Scalar(0, 160, 255), 1, LINE_AA);
-		
 		// Add player/text to outputWindow
+		/*
 		circle(outputWindow, vars.playerXY, 4, Scalar(255, 255, 255), 6, 8, 0);
 		putText(outputWindow, vars.dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
 		putText(outputWindow, std::to_string(vars.playerSlot), Point(10,200), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		*/
 		vars.resetInLoopVars();
+		
+		/*
 		timestamp end = std::chrono::high_resolution_clock::now();
 		int fps = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 		if (fps > 0) {
@@ -206,6 +207,7 @@ int main() {
 		imshow("output", shown);
 		esc = waitKey(1);
 		if(esc == 27) break; // close on ESC
+		*/
 	}
 	return 0;
 }
