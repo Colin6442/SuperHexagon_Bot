@@ -5,10 +5,13 @@
 using namespace cv;
 constexpr auto π = 3.14159265;
 
+
 angleDistance::angleDistance(){
 	degree = 0;
 	radian = 0;
 }
+
+angleDistance::~angleDistance(){}
 
 angleDistance::angleDistance(int ang, double dist){
 	degree = ang;
@@ -25,6 +28,15 @@ double angleDistance::getClosestWall(){
 	return angleDistance::distances[0];
 }
 
+////////////////////////////////////////////////
+// angleDistance ^
+
+
+
+
+// Wall v
+////////////////////////////////////////////////
+
 Wall::Wall(Point pt1, Point pt2, double slopeIn, double toCenter, Point mid){
 	point1 = pt1;
 	point2 = pt2;
@@ -33,6 +45,8 @@ Wall::Wall(Point pt1, Point pt2, double slopeIn, double toCenter, Point mid){
 	distToCenter = toCenter;
 	middle = mid;
 }
+
+Wall::~Wall(){}
 
 void Wall::getAnglesCovered(int width, int height, std::vector<angleDistance>& angles){
 	//Calc angle for point1
@@ -95,20 +109,31 @@ void Wall::getAnglesCovered(int width, int height, std::vector<angleDistance>& a
 	}
 }
 
+////////////////////////////////////////////////
+// Wall ^
+
+
+
+
+// wallSegment v
+////////////////////////////////////////////////
+
 wallSegment::wallSegment(){}
 
-int compareAngle(double bestAng, double playerAng, String* dir) {
-	double normal = abs(playerAng * (180 / π) - bestAng * (180 / π));
-	double add360 = playerAng * (180 / π) - bestAng * (180 / π) + 360;
-	double minus360 = abs(playerAng * (180 / π) - bestAng * (180 / π) - 360);
+wallSegment::~wallSegment(){}
 
-	if (abs(int(playerAng * (180 / π)) - bestAng * (180 / π)) < 2) {
+int compareAngle(double middleAng, double playerAng, std::string* dir) {
+	double normal = abs(playerAng - middleAng);
+	double add360 = playerAng - middleAng + 360;
+	double minus360 = abs(playerAng - middleAng - 360);
+
+	if (abs(int(playerAng) - middleAng) < 10) {
 		*dir = "None";
 		return 0;
 	}
 
-	if (normal < add360 && normal < minus360) {
-		if (playerAng * (180 / π) - bestAng * (180 / π) > 0) {
+	if (normal <= add360 && normal <= minus360) {
+		if (playerAng - middleAng > 0) {
 			*dir = "Right";
 		}
 		else {
@@ -116,11 +141,11 @@ int compareAngle(double bestAng, double playerAng, String* dir) {
 		}
 		return abs(normal);
 	}
-	else if (add360 < normal && add360 < minus360) {
+	else if (add360 <= normal && add360 <= minus360) {
 		*dir = "Right";
 		return add360;
 	}
-	else if (minus360 < normal && minus360 < add360) {
+	else if (minus360 <= normal && minus360 <= add360) {
 		*dir = "Left";
 		return minus360;
 	}
@@ -128,11 +153,10 @@ int compareAngle(double bestAng, double playerAng, String* dir) {
 
 }
 
-wallSegment::wallSegment(int startIn, int endIn, double playerAngleRad, double toCenter){
+wallSegment::wallSegment(int startIn, int endIn, int mid, double playerAngleDeg, double toCenter){
 	start = startIn;
 	end = endIn;
-	middle = (end + start)/2;
+	middle = mid;
 	distToCenter = toCenter;
-	double middleAngle = (π/180)*((endIn + startIn)/2);
-	distFromPlayer = compareAngle(middleAngle, playerAngleRad, &dirFromPlayer);
+	angleFromPlayer = compareAngle(middle, playerAngleDeg, &dirFromPlayer);
 }

@@ -18,7 +18,7 @@
 #include <tlhelp32.h>
 #include <tchar.h>
 
-
+#include "variables.h"
 #include "wallClasses.h"
 #include "circularList.h"
 #include "functions.h"
@@ -30,49 +30,40 @@ using namespace cv;
 
 typedef std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
 
-struct Offsets{
-	enum : DWORD {
-		BaseOffset = 0x15E8EC,
-		PlayerAngle = 0x1E0,
-		PlayerAngleOffset = 0x298C, //float
-		relativeAngle = 0x2980,
-		MouseDownLeft = 0x38,
-		MouseDownRight = 0x3C,
-		worldAngle = 0x1A0,			//float
-		otherAngle1 = 0x1D8,
-		otherAngle2 = 0x1DC,
-		otherAngle3 = 0x1AC,
-		otherAngle4 = 0x2974,
-		otherAngle5 = 0x2978,
-	};
-};
-
-
 int main() {
+
+	// Turn keyboard inputs off/on
+	bool movement = true;
+
+	// Variable Structure
+	Variables vars;
+
 	// Get Game Window Info
 	LPCSTR window_title = (LPCSTR)"Super Hexagon";
 	HWND hWND = FindWindowA(NULL, window_title);
-	namedWindow("output", WINDOW_NORMAL);
-	
+	namedWindow("output", WINDOW_NORMAL); //create window to show outputs
+
 	// Setup Memory Access
 	DWORD processId = -1;
 	GetWindowThreadProcessId(hWND, &processId);
 	if (processId == -1){
 		std::cout << "Open ProcessID Failed." << std::endl;
 	}
-	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
-	if (hProcess == NULL){
+	vars.hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
+	if (vars.hProcess == NULL){
 		std::cout << "Open Process Failed." << std::endl;
 	}
+	
 
-	DWORD appBase = GetBaseAddress(processId, L"SuperHexagon.exe");
+	vars.appBase = GetBaseAddress(processId, L"SuperHexagon.exe");
 
-	DWORD basePointer = appBase + Offsets::BaseOffset;
+	DWORD basePointer = vars.appBase + vars.BaseOffset;
 
-	bool success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(basePointer), &appBase, sizeof(DWORD), NULL);
+	bool success = ReadProcessMemory(vars.hProcess, reinterpret_cast<LPCVOID>(basePointer), &vars.appBase, sizeof(DWORD), NULL);
 	assert(success);
 
 	// Setup Keyboard Inputs
+	int esc = 0;
 	INPUT keyboard;
 	keyboard.type = INPUT_KEYBOARD;
 	keyboard.ki.time = 0;
@@ -80,50 +71,47 @@ int main() {
 	keyboard.ki.dwExtraInfo = 0;
 	keyboard.ki.dwFlags = 0;
 	keyboard.ki.wVk = 0;
+	
+	// Process Image from Game
+	Mat original = getMat(hWND);
+	Size s = original.size();
+	//big: (1250, 805)   small: (768, 480)
+	vars.width = s.width;
+	vars.height = s.height; 
 
-	// Out of Loop Variables
-	int count = 0;
-	int esc = 0;
-	Point2d playerXY = Point2d(0,0);
-	double playerAngleRad = 0;
-	int playerAngleDeg = 0;
-	String dir = "None";
 
 	while (true) {
-
-		// Get time for FPS
+		// Start timer for FPS
 		timestamp start = std::chrono::high_resolution_clock::now();
 
 		// Initialize angles
-		std::vector<angleDistance> angles;
-		angleDistance angle;
+		// std::vector<angleDistance> angles;
 		for(int i = 0; i < 360; i++){
-			angle = *(new angleDistance(i, 9999));
-			angles.push_back(angle);
+			angleDistance angle = *(new angleDistance(i, 450));
+			vars.angles.push_back(angle);
 		}
 
-		// Process Image from Game
-		Mat original = getMat(hWND);
 
 		// Read memory first, then compute
 		float worldAngle;
-		success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::worldAngle), &worldAngle, sizeof(DWORD), NULL);
+		success = ReadProcessMemory(vars.hProcess, reinterpret_cast<LPCVOID>(vars.appBase + vars.worldAngle), &worldAngle, sizeof(DWORD), NULL);
 			assert(success);
 
-		bool success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::PlayerAngle), &playerAngleDeg, sizeof(DWORD), NULL);
+		success = ReadProcessMemory(vars.hProcess, reinterpret_cast<LPCVOID>(vars.appBase + vars.PlayerAngle), &vars.playerAngleDeg, sizeof(DWORD), NULL);
 			assert(success);
 
-		float offset;
-		success = ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(appBase + Offsets::PlayerAngleOffset), &offset, sizeof(DWORD), NULL);
+		success = ReadProcessMemory(vars.hProcess, reinterpret_cast<LPCVOID>(vars.appBase + vars.PlayerAngleOffset), &vars.playerOffset, sizeof(DWORD), NULL);
+			assert(success);
+
+		success = ReadProcessMemory(vars.hProcess, reinterpret_cast<LPCVOID>(vars.appBase + vars.relativeAngle), &vars.relativeAngles, sizeof(DWORD), NULL);
 			assert(success);
 		
 		// Continuue processing image
-		Size s = original.size();
-		int type = original.type();
-		int width = s.width, height = s.height; //big: (1250, 805)   small: (768, 480)
+		original = getMat(hWND);
+		s = original.size();
 		Mat gray, edge;
-		Mat outputWindow(s, type);
-		Mat shown(s, type);
+		Mat outputWindow(s, original.type());
+		Mat shown(s, original.type());
 		original.copyTo(gray);
 		cvtColor(gray, gray, COLOR_BGR2GRAY);
 		threshold(gray, gray, 200, 255, THRESH_BINARY);
@@ -131,59 +119,82 @@ int main() {
 		std::vector<Vec4i> lines;
 		HoughLinesP(edge, lines, 1, CV_PI / 180, 7, 5, 12);
 
-		// Unpress Key
-		// keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
-		// SendInput(1, &keyboard, sizeof(INPUT));
-		// keyboard.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-		// SendInput(1, &keyboard, sizeof(INPUT));	
-
 		// Run Detection Functions
-		std::vector<Wall> parallelWalls;
-		checkAllDetections(lines, parallelWalls, angles, outputWindow, width, height);
-		setPlayerLocation(&playerXY, &playerAngleRad, &playerAngleDeg, &offset, dir, hProcess, appBase, width, height);
-		for(int i = 0; i < parallelWalls.size(); i++){
-			parallelWalls[i].getAnglesCovered(width, height, angles);
+		checkAllDetections(lines, outputWindow, &vars);
+		setPlayerLocation(&vars);
+		for(int i = 0; i < vars.parallelWalls.size(); i++){
+			vars.parallelWalls[i].getAnglesCovered(vars.width, vars.height, vars.angles);
+		}
+		
+		// Unpress Key
+		if(movement){
+			keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+			SendInput(1, &keyboard, sizeof(INPUT));
+			keyboard.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+			SendInput(1, &keyboard, sizeof(INPUT));	
 		}
 
 		// Setup Walls and Add to Screen
-		int sectionAngles [6];
 		for(int i = (int(worldAngle+30)%60), j = 0; j < 6; i+=60, j++){
-			sectionAngles[j] = i;
+			vars.sectionAngles[j] = i;
 		}
 
-		std::vector<wallSegment> wallSegments;
-		setWallSegments(wallSegments, angles, sectionAngles, playerAngleRad, width, height);
-		for(int i = 0; i < wallSegments.size(); i++){
-			ellipse(outputWindow, Point(width/2, height/2), Size(wallSegments[i].distToCenter, wallSegments[i].distToCenter), 0, -wallSegments[i].start, -wallSegments[i].end, Scalar(0,255,0));
+		setWallSegments(&vars);
+		
+		// Compute best slot to use
+		bestDirection(&vars, outputWindow);
+
+		for(int i = 0; i < vars.wallSegments.size(); i++){
+			ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(vars.wallSegments[i].distToCenter, vars.wallSegments[i].distToCenter), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,255,0));
+			
+			if (vars.playerAngleDeg > vars.wallSegments[i].start && vars.playerAngleDeg < vars.wallSegments[i].end){
+				if(i == 6){
+					vars.playerSlot = 5;
+				}else{
+					vars.playerSlot = i;
+				}
+				ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(50, 50), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(0,0,255));
+			}
+			
+			if(vars.best_slot == i){
+				ellipse(outputWindow, Point(vars.width/2, vars.height/2), Size(60, 60), 0, -vars.wallSegments[i].start, -vars.wallSegments[i].end, Scalar(255,0,0));
+			}
 		}
+
+		// compareAngles()
+
+		// display debug stuff
 		for(int i = 0; i < 6; i++){
-			putText(outputWindow, std::to_string((int)wallSegments[i].distToCenter), Point(200*cos((double)((sectionAngles[i] + 30) * π/180)) + width/2, 100*sin((double)-((sectionAngles[i] + 30) * π/180)) + height/2), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
-		}
-		// Select Best Angle to Use
-		double bestAngle = 0;
-		if(wallSegments.size() > 0){
-			chooseBestAngle(wallSegments, playerAngleDeg, &bestAngle);
-		}
+			putText(outputWindow, std::to_string((int)vars.wallSegments[i].distToCenter), Point(200*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 200*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+			putText(outputWindow, std::to_string((int)vars.wallSegments[i].angleFromPlayer), Point(100*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 100*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(255,255,255));
+			// putText(outputWindow, std::to_string(i), Point(150*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 150*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0,160,255));
+			putText(outputWindow, std::to_string(vars.wallSegments[i].score), Point(150*cos((double)((vars.sectionAngles[i] + 30) * π/180)) + vars.width/2, 150*sin((double)-((vars.sectionAngles[i] + 30) * π/180)) + vars.height/2), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0,160,255));
 
+		}
+		
+		
 		// Set Key Press
-		compareAngles(/*bestAngle*/worldAngle, playerAngleRad, &dir);
-		// dir = "Left";
-		if(dir == "None"){ keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_DOWN),0);
-		}else if(dir == "Left") { keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_LEFT),0);
-		}else if(dir == "Right"){ keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_RIGHT),0);}
+		if(vars.dir == "None"){         keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_DOWN),0);
+		}else if(vars.dir == "Left") {  keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_LEFT),0);
+		}else if(vars.dir == "Right"){  keyboard.ki.wScan = MapVirtualKey(LOBYTE(VK_RIGHT),0);}
 		
 		// Key Down
-		// keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
-		// SendInput(1, &keyboard, sizeof(INPUT));
-	
-		line(outputWindow, Point(width/2, height/2), Point(300*cos((double)(worldAngle * π/180)) + width/2, 300*sin((double)-(worldAngle * π/180)) + height/2), Scalar(0, 0, 255), 1, LINE_AA);
-		for(int i = 0; i < 6; i++){
-			line(outputWindow, Point(width/2, height/2), Point(300*cos((double)(sectionAngles[i] * π/180)) + width/2, 300*sin((double)-(sectionAngles[i] * π/180)) + height/2), Scalar(255, 0, 0), 1, LINE_AA);
+		if(movement){
+			keyboard.ki.dwFlags = KEYEVENTF_SCANCODE;
+			SendInput(1, &keyboard, sizeof(INPUT));
 		}
 
+		// line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(worldAngle * π/180)) + vars.width/2, 300*sin((double)-(worldAngle * π/180)) + vars.height/2), Scalar(0, 0, 255), 1, LINE_AA);
+		// for(int i = 0; i < 6; i++){
+		// 	line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(vars.sectionAngles[i] * π/180)) + vars.width/2, 300*sin((double)-(vars.sectionAngles[i] * π/180)) + vars.height/2), Scalar(255, 0, 0), 1, LINE_AA);
+		// }
+		// line(outputWindow, Point(vars.width/2, vars.height/2), Point(300*cos((double)(vars.relativeAngles * π/180)) + vars.width/2, 300*sin((double)-(vars.relativeAngles * π/180)) + vars.height/2), Scalar(0, 160, 255), 1, LINE_AA);
+		
 		// Add player/text to outputWindow
-		circle(outputWindow, playerXY, 4, Scalar(255, 255, 255), 6, 8, 0);
-		putText(outputWindow, dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
+		circle(outputWindow, vars.playerXY, 4, Scalar(255, 255, 255), 6, 8, 0);
+		putText(outputWindow, vars.dir, Point(10,150), FONT_HERSHEY_SIMPLEX, 1, Scalar(255,0,255));
+		putText(outputWindow, std::to_string(vars.playerSlot), Point(10,200), FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
+		vars.resetInLoopVars();
 		timestamp end = std::chrono::high_resolution_clock::now();
 		int fps = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 		if (fps > 0) {
@@ -196,6 +207,5 @@ int main() {
 		esc = waitKey(1);
 		if(esc == 27) break; // close on ESC
 	}
-	while(true){}
 	return 0;
 }

@@ -6,6 +6,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string.h>
 #include <chrono>
@@ -18,15 +19,13 @@
 
 #include "wallClasses.h"
 #include "circularList.h"
+#include "variables.h"
 
 using namespace cv;
 constexpr auto π = 3.14159265;
 
 struct Offset{
 	enum : DWORD {
-		GameBase = 0,
-		BasePointer = 0xe0000 + 0x15E8EC,  // fix, not static base
-
 		PlayerAngle = 0x1E0,
 		PlayerAngleOffset = 0x298C, //float
 		relativeAngle = 0x2980,
@@ -107,18 +106,18 @@ Mat getMat(HWND hWND) {
 	return mat;
 }
 
-int compareAngles(double bestAng, double playerAng, String* dir){
-	double normal = abs(playerAng*(180/π) - bestAng*(180/π));
-	double add360 = playerAng*(180/π) - bestAng*(180/π) + 360;
-	double minus360 = abs(playerAng*(180/π) - bestAng*(180/π) - 360);
+int compareAngles(double bestAng, double playerAng, std::string* dir){
+	double normal = abs(playerAng - bestAng);
+	double add360 = playerAng - bestAng + 360;
+	double minus360 = abs(playerAng - bestAng - 360);
 
-	if(abs(int(playerAng*(180/π)) - bestAng*(180/π)) < 2){
+	if(abs(int(playerAng) - bestAng) < 2){
 		*dir = "None";
 		return 0;
 	}
 
 	if(normal < add360 && normal < minus360){
-		if(playerAng*(180/π) - bestAng*(180/π) > 0){
+		if(playerAng - bestAng > 0){
 			*dir = "Right";
 		}else{
 			*dir = "Left";
@@ -135,17 +134,18 @@ int compareAngles(double bestAng, double playerAng, String* dir){
 	
 }
 
-void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angleDistance>& angles, Point pt1, Point pt2, Point middle, int width, int height) {
+void detectWalls(Mat& empty, Point pt1, Point pt2, Point middle, Variables *vars) {
 	std::vector<Point> triangle;
 	if((pt1.x - pt2.x) != 0){
 		double slope = double(pt1.y - pt2.y)/double(pt1.x - pt2.x);
-		double yOffSet = (slope*(width/2) - slope*pt1.x + pt1.y);
-		double toCenter = sqrt(pow(middle.x - width*.5, 2) + pow(middle.y - height*.5, 2));
-		if (sqrt(pow(yOffSet - height/2, 2)) < 50){ // parallel walls
+		double yOffSet = (slope*(vars->width/2) - slope*pt1.x + pt1.y);
+		double toCenter = sqrt(pow(middle.x - vars->width*.5, 2) + pow(middle.y - vars->height*.5, 2));
+		if (sqrt(pow(yOffSet - vars->height/2, 2)) < 50){ // parallel walls
 			// line(empty, pt1, pt2, Scalar(0, 200, 0), 1, LINE_AA);
 		}else{ // perpendicular walls
 			Wall added = *(new Wall(pt1, pt2, slope, toCenter, middle));
-			parallelWalls.push_back(added);
+			vars->parallelWalls.push_back(added);
+			// delete &added;
 			line(empty, pt1, pt2, Scalar(160, 0, 160), 1, LINE_AA);
 
 			// putText(empty, std::to_string((int)pt1Angle), pt1, FONT_HERSHEY_SIMPLEX, 1, Scalar(0,255,0));
@@ -157,32 +157,35 @@ void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angle
 	// double fromCenter = sqrt(pow(middle.x - width*.5, 2) + pow(middle.y - height*.5, 2));
 }
 
-void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWalls, std::vector<angleDistance>& angles, Mat& empty, int width, int height){
+void checkAllDetections(std::vector<Vec4i> lines, Mat& empty, Variables *vars){
 	double length;
 	for(size_t i = 0; i < lines.size(); i++) {
 		Vec4i line = lines[i];
 		Point pos = Point(abs(line[0] + line[2]) / 2, abs(line[1] + line[3]) / 2);
 
-		if(pos.y > 70 && sqrt(pow(pos.x - width*.5, 2) + pow(pos.y - height*.5, 2)) > 120){
-			detectWalls(parallelWalls, empty, angles, Point(line[0], line[1]), Point(line[2], line[3]), pos, width, height);
-			// circle(empty, pos, 4, Scalar(255, 255, 0), 6, 8, 0);
+		// L: 0+210 x 33  || R: 434+335 x 53
+		if( !((pos.x > 434 && pos.y < 53) || (pos.x < 210 && pos.y < 33)) ){
+			if(sqrt(pow(pos.x - vars->width*.5, 2) + pow(pos.y - vars->height*.5, 2)) > 60){
+				detectWalls(empty, Point(line[0], line[1]), Point(line[2], line[3]), pos, vars);
+				// circle(empty, pos, 4, Scalar(255, 255, 0), 6, 8, 0);
+			}
 		}
 	}
 }
 
-void setPlayerLocation(Point2d* playerXY, double* playerAngleRad, int* playerAngleDeg, float* playerOffset, String dir, HANDLE hProcess, DWORD appBase, int width, int height) {
+void setPlayerLocation(Variables *vars) {
 
-	circularList adjustedAngle(*playerAngleDeg, 360);
-	adjustedAngle += 5*(*playerOffset) + 27; *playerAngleDeg = adjustedAngle.current;
+	circularList adjustedAngle(vars->playerAngleDeg, 360);
+	adjustedAngle += 5*(vars->playerOffset) + 27; vars->playerAngleDeg = adjustedAngle.current;
 
-	*playerAngleRad = (double)adjustedAngle.current * π/180;
+	vars->playerAngleRad = (double)adjustedAngle.current * π/180;
 
-	playerXY->x = (/*100*(width/1250)*/60)*cos(*playerAngleRad) + width/2;
-	playerXY->y = (/*100*(height/805)*/60)*sin(-*playerAngleRad) + height/2;
+	vars->playerXY.x = (/*100*(width/1250)*/60)*cos(vars->playerAngleRad) + vars->width/2;
+	vars->playerXY.y = (/*100*(height/805)*/60)*sin(-vars->playerAngleRad) + vars->height/2;
 
 }
 
-void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDistance> angles, int* sectionAngles, double playerAngleRad, int width, int height){
+void setWallSegments(Variables *vars){
 	
 	wallSegment wall;
 	wallSegment firstWall;
@@ -199,45 +202,60 @@ void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDi
 	// }
 	
 	// edge cases between 0 & 360 angles
-	if(sectionAngles[0] == 0){
-		sectionAngles[0] += 1;
+	if(vars->sectionAngles[0] == 0){
+		vars->sectionAngles[0] += 1;
 	}
 	double avg = 0;
 
 	// 0 -> sectionAngles[0]
-	for(int i = 0; i < sectionAngles[0]; i++){
-		avg += angles[i].getClosestWall();
+	for(int i = 0; i < vars->sectionAngles[0]; i++){
+		avg += vars->angles[i].getClosestWall();
 	}
 
 	// sectionAngles[5] -> 359
-	for(int i = sectionAngles[5]; i < 360; i++){
-		avg += angles[i].getClosestWall();
+	for(int i = vars->sectionAngles[5]; i < 360; i++){
+		avg += vars->angles[i].getClosestWall();
 	}
 
-	firstWall = *(new wallSegment(0, sectionAngles[0], playerAngleRad, avg/60));
+	circularList middle(vars->sectionAngles[5], 360);
+	middle += 30;
+
+	firstWall = *(new wallSegment(0, vars->sectionAngles[0], middle.current, vars->playerAngleDeg, avg/60));
 	// wallSegments.push_back(wall);
-	lastWall = *(new wallSegment(sectionAngles[5], 359, playerAngleRad, avg/60));
+	lastWall = *(new wallSegment(vars->sectionAngles[5], 359, middle.current, vars->playerAngleDeg, avg/60));
 	// wallSegments.push_back(wall);
 
 	// everything inbetween
 	for(int i = 0; i < 5; i++){
 		double avg = 0;
-		for(int j = sectionAngles[i]; j < sectionAngles[i+1] && j < 360; j++){
-			avg += angles[j].getClosestWall();
+		for(int j = vars->sectionAngles[i]; j < vars->sectionAngles[i+1] && j < 360; j++){
+			avg += vars->angles[j].getClosestWall();
 		}
 
 		// assert(avg/double(sectionAngles[i+(6-useAll)] - sectionAngles[i]) >= 0 && avg/double(sectionAngles[i+(6-useAll)] - sectionAngles[i]) < 10000);
-		if (avg / double(sectionAngles[i + 1] - sectionAngles[i]) < 0 || avg / double(sectionAngles[i + 1] - sectionAngles[i]) > 90000) {
-			std::printf("unexpected: %f\n", avg / double(sectionAngles[i + 1] - sectionAngles[i]));
+		if (avg / double(vars->sectionAngles[i + 1] - vars->sectionAngles[i]) < 0 || avg / double(vars->sectionAngles[i + 1] - vars->sectionAngles[i]) > 90000) {
+			std::printf("unexpected: %f\n", avg / double(vars->sectionAngles[i + 1] - vars->sectionAngles[i]));
 		}
 
 		//																										normally +1 can be +0
-		wall = *(new wallSegment(sectionAngles[i], sectionAngles[i+1], playerAngleRad, avg/double(sectionAngles[i+1] - sectionAngles[i])));
-		wallSegments.push_back(wall);
+		wall = *(new wallSegment(vars->sectionAngles[i], vars->sectionAngles[i+1], (vars->sectionAngles[i+1] + vars->sectionAngles[i])/2, vars->playerAngleDeg, avg/double(vars->sectionAngles[i+1] - vars->sectionAngles[i])));
+		vars->wallSegments.push_back(wall);
+		// delete &wall;
 	}
 	
-	wallSegments.push_back(firstWall);
-	wallSegments.push_back(lastWall);
+	vars->wallSegments.push_back(lastWall);
+	vars->wallSegments.push_back(firstWall);
+	
+
+	for(int i = 0; i < 6; i++){
+		for(int j = 0; j < 6; j++){
+			if(abs(vars->wallSegments[i].distToCenter - vars->wallSegments[j].distToCenter) < 10){
+				int avg = (vars->wallSegments[i].distToCenter + vars->wallSegments[j].distToCenter) / 2;
+				vars->wallSegments[i].distToCenter = avg;
+				vars->wallSegments[j].distToCenter = avg;
+			}
+		}
+	}
 
 }
 
@@ -252,6 +270,91 @@ void chooseBestAngle(std::vector<wallSegment>& wallSegments, int playerAngle, do
 	}
 
 	*bestAngle = wallSegments[index].middle;
+}
+
+void bestDirection(Variables *vars, Mat& outputWindow){
+	int bestSlot = 0;
+	int bestScore = 0;
+	
+	for(int i = 0; i < 6; i++){
+		int scoring = vars->wallSegments[i].distToCenter;
+		scoring -= vars->wallSegments[i].angleFromPlayer;
+		if(vars->playerSlot != i && vars->wallSegments[vars->playerSlot].distToCenter < 110){
+			scoring += 80;
+		}
+		if(vars->playerSlot != i && vars->wallSegments[vars->playerSlot].distToCenter < 100){
+			scoring -= 50;
+		}
+		
+		// <120 dont go
+
+
+		// if(vars->wallSegments[i].dirFromPlayer == "Left"){
+		// 	for(int j = vars->playerSlot; j != i; j++){
+		// 		if(j == 6){ j = 0;}
+		// 		if(j == 0 && i == 0){break;}
+		// 		if(vars->wallSegments[j].distToCenter < 150){
+		// 			scoring -= 150 - vars->wallSegments[j].distToCenter;
+		// 		}
+		// 	}
+		// }
+
+		// if(vars->wallSegments[i].dirFromPlayer == "Right"){
+		// 	for(int j = vars->playerSlot; j != i; j--){
+		// 		if(j == -1){ j = 5;}
+		// 		if(j == 5 && i == 5){break;}
+		// 		if(vars->wallSegments[j].distToCenter < 150){
+		// 			scoring -= 150 - vars->wallSegments[j].distToCenter;
+		// 		}
+		// 	}
+		// }
+
+		if(scoring > bestScore){
+			bestScore = scoring;
+			bestSlot = i;
+		}
+
+		vars->wallSegments[i].score = scoring;
+	}
+
+	int dir = 0;
+	if(vars->wallSegments[bestSlot].dirFromPlayer == "Left"){ dir = 1;}
+	if(vars->wallSegments[bestSlot].dirFromPlayer == "Right"){ dir = -1;}
+
+	if(dir != 0){
+		int i = vars->playerSlot;
+		while(i != bestSlot){
+			i += dir;
+			if(i == vars->playerSlot){ i += dir;}
+			if(i == 6){ i = 0;}
+			if(i == -1){ i = 5;}
+			
+			// std::printf("best: %d, i: %d\n", bestSlot, i);
+			if(vars->wallSegments[i].distToCenter < 110){
+				vars->wallSegments[vars->playerSlot].score += 60;
+				break;
+			}
+
+
+		}
+	}
+
+	bestSlot = 0;
+	bestScore = 0;
+	for(int i = 0; i < 6; i++){
+		if(vars->wallSegments[i].score > bestScore){
+			bestScore = vars->wallSegments[i].score;
+			bestSlot = i;
+		}
+	}
+
+	// std::printf("-------------------\n");
+
+	vars->best_slot = bestSlot;
+
+	vars->dir = vars->wallSegments[bestSlot].dirFromPlayer;
+
+
 
 
 }

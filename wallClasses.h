@@ -10,6 +10,7 @@ struct angleDistance{
 	std::vector<double> distances;
 
 	angleDistance();
+	~angleDistance();
 	angleDistance(int ang, double dist);
 	void addWall(double dist);
 	double getClosestWall();
@@ -25,6 +26,7 @@ struct Wall{
 	double length;
 
 	Wall(cv::Point pt1, cv::Point pt2, double slopeIn, double toCenter, cv::Point mid);
+	~Wall();
 	void getAnglesCovered(int width, int height, std::vector<angleDistance>& angles);
 };
 
@@ -33,11 +35,13 @@ struct wallSegment{
 	int middle;
 	int end;
 	double distToCenter;
-	double distFromPlayer;
-	cv::String dirFromPlayer;
+	double angleFromPlayer;
+	std::string dirFromPlayer;
+	int score = 0;
 
 	wallSegment();
-	wallSegment(int startIn, int endIn, double playerAngleRad, double toCenter);
+	~wallSegment();
+	wallSegment(int startIn, int endIn, int mid, double playerAngleDeg, double toCenter);
 };
 
 

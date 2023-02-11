@@ -13,16 +13,18 @@
 #include <Windows.h>
 
 #include "wallClasses.h"
+#include "variables.h"
 
 using namespace cv;
 
 uintptr_t GetBaseAddress(DWORD procId, const wchar_t* modName);
 Mat getMat(HWND hWND);
-int compareAngles(double bestAng, double playerAng, String* dir);
-void detectWalls(std::vector<Wall>& parallelWalls, Mat& empty, std::vector<angleDistance>& angles, Point pt1, Point pt2, Point middle, int width, int height);
-void checkAllDetections(std::vector<Vec4i> lines, std::vector<Wall>& parallelWalls, std::vector<angleDistance>& angles, Mat& empty, int width, int height);
-void setPlayerLocation(Point2d* playerXY, double* playerAngleRad, int* playerAngleDeg, float* playerOffset, String dir, HANDLE hProcess, DWORD appBase, int width, int height);
-void setWallSegments(std::vector<wallSegment>& wallSegments, std::vector<angleDistance> angles, int* sectionAngles, double playerAngleRad, int width, int height);
+int compareAngles(double bestAng, double playerAng, std::string* dir);
+void detectWalls(Mat& empty, Point pt1, Point pt2, Point middle, Variables *vars);
+void checkAllDetections(std::vector<Vec4i> lines, Mat& empty, Variables *vars);
+void setPlayerLocation(Variables *vars);
+void setWallSegments(Variables *vars);
 void chooseBestAngle(std::vector<wallSegment>& wallSegments, int playerAngle, double* bestAngle);
+void bestDirection(Variables *vars, Mat& outputWindow);
 
 #endif
